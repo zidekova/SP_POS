@@ -3,11 +3,11 @@ CFLAGS = -Wall -pthread
 
 all: server klient
 
-server: server.c
-	$(CC) $(CFLAGS) -o server server.c
+server: server.c sockets-lib/socket.c
+	$(CC) $(CFLAGS) -o server server.c sockets-lib/socket.c
 
-klient: klient.c
-	$(CC) $(CFLAGS) -o klient klient.c
+klient: klient.c sockets-lib/socket.c
+	$(CC) $(CFLAGS) -o klient klient.c sockets-lib/socket.c
 
 clean:
 	rm -f server klient

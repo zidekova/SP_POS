@@ -1,69 +1,66 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <string.h>
+#include "sockets-lib/socket.h"
 
-#define MSG_SIZE 256
-#define SERVER_QUEUE_KEY 12345
+#define SOCKET_PC 9999
 
-// Struktura správy pre message queue
-struct message {
-    long msg_type;
-    char msg_text[MSG_SIZE];
-};
-
-// Funkcia, ktorá spracováva správy od klienta
 void *handle_client(void *arg) {
-    int msgid = *((int *)arg);
-    struct message msg;
+    int client_socket = *(int *)arg;
+    free(arg);
 
+    char buffer[256];
     while (1) {
-        // Čaká na príchod správy od klienta
-        if (msgrcv(msgid, &msg, sizeof(msg.msg_text), 0, 0) == -1) {
-            perror("Chyba pri prijímaní správy");
-            pthread_exit(NULL);
-        } else {
-            printf("Prijatá správa: %s\n", msg.msg_text);
-
-            // Ak dostane správu "KONIEC", ukončí vlákno
-            if (strcmp(msg.msg_text, "KONIEC") == 0) {
-                printf("Klient sa odpojil.\n");
-                pthread_exit(NULL);
-            }
+        memset(buffer, 0, sizeof(buffer));
+        int n = read(client_socket, buffer, sizeof(buffer) - 1);
+        if (n <= 0) {
+            printf("Klient sa odpojil.\n");
+            break;
         }
+        printf("Sprava od klienta: %s\n", buffer);
+
+        // Odošli odpoveď klientovi
+        write(client_socket, "Server prijal spravu", 20);
     }
+
+    close(client_socket);
+    return NULL;
 }
 
 int main() {
-    int msgid;
-
-    // Vytvorenie fronty správ
-    msgid = msgget(SERVER_QUEUE_KEY, IPC_CREAT | 0666);
-    if (msgid < 0) {
-        perror("Chyba pri vytváraní fronty správ");
-        exit(EXIT_FAILURE);
+    int fd_passive = passive_socket_init(SOCKET_PC); // Inicializácia pasívneho soketu
+    if (fd_passive < 0) {
+        fprintf(stderr, "Chyba pri inicializacii servera.\n");
+        return 1;
     }
 
-    printf("Server beží. Čakám na pripojenie hráčov...\n");
+    printf("Server beží na porte %d. Čakám na pripojenie klientov...\n", SOCKET_PC);
 
     while (1) {
-        // Vytvára nové vlákno pre každého klienta
-        pthread_t thread_id;
-        if (pthread_create(&thread_id, NULL, handle_client, &msgid) != 0) {
-            perror("Chyba pri vytváraní vlákna");
-        } else {
-            printf("Nový klient sa pripojil. Vlákno ID: %ld\n", thread_id);
+        int fd_active = passive_socket_wait_for_client(fd_passive); // Čakáme na pripojenie klienta
+        if (fd_active < 0) {
+            perror("Chyba pri čakaní na klienta");
+            continue; // Ak došlo k chybe, pokračujeme v čakaní na ďalšieho klienta
         }
+
+        printf("Nový klient sa pripojil.\n");
+
+        // Dynamicky alokujeme pamäť pre soket klienta
+        int *client_socket = malloc(sizeof(int));
+        *client_socket = fd_active;
+
+        pthread_t thread;
+        if (pthread_create(&thread, NULL, handle_client, client_socket) != 0) {
+            perror("Chyba pri vytváraní vlákna");
+            free(client_socket); // Uvoľníme alokovanú pamäť v prípade chyby
+            continue;
+        }
+
+        pthread_detach(thread); // Odpojíme vlákno, aby sa automaticky vyčistilo po dokončení
     }
 
-    // Odstránenie fronty správ pri ukončení servera
-    if (msgctl(msgid, IPC_RMID, NULL) == -1) {
-        perror("Chyba pri odstraňovaní fronty správ");
-    }
-
+    active_socket_destroy(fd_passive); // Uzatvoríme pasívny soket
     return 0;
 }

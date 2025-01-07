@@ -1,107 +1,121 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
-#include <unistd.h>
 #include <string.h>
-#include <stdbool.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>  
+#include <pthread.h>
 #include "sockets-lib/socket.h"
-#include "balicek_kariet.h"
 
-#define SOCKET_PC 9999
-#define MAX_POCET_HRACOV 4
-#define MAX_POCET_KARIET 5
+#define MAX_PLAYERS 10
+#define BUFFER_SIZE 1024
 
-typedef struct Hrac {
-    int sock;
-    int player_id;
-} Hrac;
+typedef struct {
+    int socket;
+    struct sockaddr_in address;
+} Client;
 
-Karta ruka[MAX_POCET_HRACOV][5]; 
-Karta posledna_karta; 
-int aktualny_hrac = 0;
-
-bool game_finished = false;  
+Client clients[MAX_CLIENTS];
+pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void *handle_client(void *arg) {
-    Hrac *hrac = (Hrac *)arg;
-
-    Karta ruka_hraca[MAX_POCET_KARIET];
-    memcpy(ruka_hraca, ruka[hrac->player_id], sizeof(Karta) * MAX_POCET_KARIET);
+    int client_socket = *(int *)arg;
+    char buffer[BUFFER_SIZE];
 
     while (1) {
-        if (aktualny_hrac == hrac->player_id) {
-            printf("Hrac %d je na rade.\n", hrac->player_id + 1);
-            printf("Posledna karta: %d-%d\n", posledna_karta.farba, posledna_karta.hodnota);
-
-            // Čaká na výber karty
-            Karta nova_karta;
-            read(hrac->sock, &nova_karta, sizeof(Karta));
-            
-            posledna_karta = nova_karta;
-            printf("Hrac %d zahral kartu %d-%d.\n", hrac->player_id + 1, nova_karta.farba, nova_karta.hodnota);
-            write(hrac->sock, &nova_karta, sizeof(Karta));  // Pošle potvrdenie
-            
-            // Hráč nemôže položiť kartu, musí ťahať
-            // nova_karta = ťahaj_z_balíčka();
-            // printf("Hrac %d ťahá kartu: %d-%d\n", hrac->player_id + 1, nova_karta.farba, nova_karta.hodnota);
-            // write(hrac->sock, &nova_karta, sizeof(Karta));  // Pošle kartu
-        
-            // Prejde na ďalšieho hráča
-            aktualny_hrac = (aktualny_hrac + 1) % MAX_POCET_HRACOV;
+        memset(buffer, 0, BUFFER_SIZE);
+        int bytes_received = read(client_socket, buffer, BUFFER_SIZE);
+        if (bytes_received <= 0) {
+            // Klient sa odpojil
+            printf("Klient sa odpojil\n");
+            close(client_socket);
+            pthread_mutex_lock(&clients_mutex);
+            for (int i = 0; i < MAX_CLIENTS; i++) {
+                if (clients[i].socket == client_socket) {
+                    clients[i].socket = 0;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&clients_mutex);
+            break;
         }
-        sleep(1);
+
+        // Spracovanie správy od klienta (napr. pohyb hráča)
+        printf("Prijatá správa: %s\n", buffer);
+
+        // Poslanie správy všetkým klientom
+        pthread_mutex_lock(&clients_mutex);
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].socket != 0) {
+                write(clients[i].socket, buffer, strlen(buffer));
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
     }
 
-    free(arg);
-    close(hrac->sock);
     return NULL;
 }
 
-void start_game_simulation() {
-    vytvor_balicek();
-    zamiesaj_balicek();
-    posledna_karta = balicek[MAX_POCET_HRACOV - 1];  // Začneme poslednou kartou balíčka
-
-    printf("Server zacal hru...\n");
-}
-
-int main() {
-    printf("Spustil sa server.\n");
-
-    int fd_passive = passive_socket_init(SOCKET_PC);
-    if (fd_passive < 0) {
-        fprintf(stderr, "Chyba pri inicializacii servera.\n");
-        return 1;
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Použitie: %s <port>\n", argv[0]);
+        exit(1);
     }
 
-    start_game_simulation();
+    int port = atoi(argv[1]);
+    int server_socket = passive_socket_init(port);
+    if (server_socket < 0) {
+        fprintf(stderr, "Chyba pri inicializácii servera\n");
+        exit(1);
+    }
 
-    pthread_t threads[MAX_POCET_HRACOV];
-    for (int i = 0; i < MAX_POCET_HRACOV; i++) {
-        int fd_active = passive_socket_wait_for_client(fd_passive);
-        if (fd_active < 0) {
-            perror("Chyba pri cakani na klienta");
+    // Inicializácia poľa klientov
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        clients[i].socket = 0;
+    }
+
+    printf("Server počúva na porte %d...\n", port);
+
+    while (1) {
+        struct sockaddr_in client_address;
+        socklen_t client_len = sizeof(client_address);
+        int client_socket = accept(server_socket, (struct sockaddr *)&client_address, &client_len);
+        if (client_socket < 0) {
+            perror("Chyba pri prijímaní klienta");
             continue;
         }
 
-        printf("Novy klient sa pripojil.\n");
+        // Pridanie nového klienta do poľa
+        pthread_mutex_lock(&clients_mutex);
+        int added = 0;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].socket == 0) {
+                clients[i].socket = client_socket;
+                clients[i].address = client_address;
+                printf("Nový klient pripojený: %s:%d\n", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port));
+                added = 1;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
 
-        Hrac *hrac = malloc(sizeof(Hrac));
-        hrac->sock = fd_active;
-        hrac->player_id = i;
-        memcpy(ruka[i], &balicek[i * MAX_POCET_KARIET], sizeof(Karta) * MAX_POCET_KARIET); 
-
-        if (pthread_create(&threads[i], NULL, handle_client, hrac) != 0) {
-            perror("Chyba pri vytvarani vlakna");
-            free(hrac);
+        if (!added) {
+            fprintf(stderr, "Nie je možné pripojiť ďalšieho klienta (plný počet klientov)\n");
+            close(client_socket);
             continue;
         }
+
+        // Vytvorenie vlákna pre klienta
+        pthread_t thread;
+        if (pthread_create(&thread, NULL, handle_client, &client_socket) != 0) {
+            perror("Chyba pri vytváraní vlákna");
+            close(client_socket);
+        }
+        pthread_detach(thread);
     }
 
-    for (int i = 0; i < MAX_POCET_HRACOV; i++) {
-        pthread_join(threads[i], NULL);
-    }
-
-    active_socket_destroy(fd_passive);
+    close(server_socket);
     return 0;
 }

@@ -25,12 +25,13 @@ typedef struct Karta {
     Hodnota hodnota;
 } Karta;
 
-// Externá deklarácia pre balicek
-extern Karta balicek[32];
+typedef struct {
+    Karta karty[32];
+} Balicek;
 
 // Deklarácie funkcií
-void vytvor_balicek();
+Balicek vytvor_balicek();
 void zamiesaj_balicek();
-void rozdaj_karty(Karta *hrac, int pocet_hracov);
+void rozdaj_karty(Balicek* balicek, Karta *hrac, int pocet_hracov);
 
 #endif

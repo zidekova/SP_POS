@@ -2,40 +2,61 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
 #include "sockets-lib/socket.h"
-#include "balicek_kariet.h"
 
-#define SOCKET_PC 9999
+#define BUFFER_SIZE 1024
 
-int main() {
-    printf("Spustam server ako samostatny proces na pozadi...\n");
-    pid_t pid = fork();
-    if (pid == 0) {
-        execl("./server", "server", NULL);
-        perror("Chyba pri spustani servera");
+void *receive_messages(void *arg) {
+    int client_socket = *(int *)arg;
+    char buffer[BUFFER_SIZE];
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        int bytes_received = read(client_socket, buffer, BUFFER_SIZE);
+        if (bytes_received <= 0) {
+            printf("Server sa odpojil\n");
+            break;
+        }
+        printf("Prijatá správa: %s\n", buffer);
+    }
+
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Použitie: %s <server_ip> <port>\n", argv[0]);
         exit(1);
     }
 
-    sleep(1);  // Dáme čas serveru na spustenie
+    const char *server_ip = argv[1];
+    int port = atoi(argv[2]);
 
-    int client_socket = connect_to_server("localhost", SOCKET_PC);
+    int client_socket = connect_to_server(server_ip, port);
     if (client_socket < 0) {
-        fprintf(stderr, "Nepodarilo sa pripojit na server.\n");
-        return 1;
+        fprintf(stderr, "Chyba pri pripájaní na server\n");
+        exit(1);
     }
 
-    Karta karta;
+    printf("Pripojený na server %s:%d\n", server_ip, port);
+
+    // Vlákno na prijímanie správ od servera
+    pthread_t thread;
+    pthread_create(&thread, NULL, receive_messages, &client_socket);
+
+    // Hlavné vlákno na posielanie správ na server
+    char buffer[BUFFER_SIZE];
     while (1) {
-        printf("Cakam na kartu od servera...\n");
-        read(client_socket, &karta, sizeof(Karta));
-        printf("Obdržaná karta: %c-%d\n", karta.farba, karta.hodnota);
-
-        // Vykonaj akciu podľa karty
-        printf("Vyber kartu na polozenie: ");
-        scanf("%d", (int *)&karta.hodnota);  // Na testovanie
-        write(client_socket, &karta, sizeof(Karta));
+        memset(buffer, 0, BUFFER_SIZE);
+        fgets(buffer, BUFFER_SIZE, stdin);
+        write(client_socket, buffer, strlen(buffer));
     }
 
-    active_socket_destroy(client_socket);
+    close(client_socket);
     return 0;
 }

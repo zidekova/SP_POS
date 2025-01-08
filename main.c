@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/wait.h> 
 
 void start_server(int port) {
     pid_t pid = fork();
@@ -16,6 +17,7 @@ void start_server(int port) {
         perror("fork");
     } else {
         printf("Server bol spustený na porte %d\n", port);
+        waitpid(pid, NULL, 0);
     }
 }
 
@@ -32,6 +34,7 @@ void start_client(const char *server_ip, int port) {
         perror("fork");
     } else {
         printf("Klient sa pripojil na server %s:%d\n", server_ip, port);
+        waitpid(pid, NULL, 0);
     }
 }
 

@@ -7,54 +7,86 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>  
 #include <pthread.h>
+#include <time.h>
 #include "sockets-lib/socket.h"
+#include "balicek_kariet.h"
+#include "pravidla.h"
+#include "struktury.h"
 
-#define MAX_PLAYERS 10
-#define BUFFER_SIZE 1024
+Karta balicek[POCET_KARIET_V_BALICKU];
+Karta kopa[POCET_KARIET_V_BALICKU];
+int vrch_kopy = -1;
 
-typedef struct {
-    int socket;
-    struct sockaddr_in address;
-} Client;
+Hrac hraci[MAX_POCET_HRACOV];
+int pocet_hracov = 0;
+int aktualny_hrac = 0;
+pthread_mutex_t mutex_hra = PTHREAD_MUTEX_INITIALIZER;
 
-Client clients[MAX_CLIENTS];
-pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
+void posli_spravu(int socket, const char* sprava) {
+    write(socket, sprava, strlen(sprava));
+}
+
+void posli_karty_hracom() {
+    for (int i = 0; i < pocet_hracov; i++) {
+        for (int j = 0; j < ZAC_POCET_KARIET; j++) {
+            char karta[3];
+            karta[0] = hraci[i].karty_v_ruke[j].hodnota;
+            karta[1] = hraci[i].karty_v_ruke[j].farba;
+            karta[2] = '\0';
+            write(hraci[i].socket, karta, sizeof(karta));
+        }
+    }
+}
 
 void *handle_client(void *arg) {
     int client_socket = *(int *)arg;
-    char buffer[BUFFER_SIZE];
+    char buffer[10];
 
     while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-        int bytes_received = read(client_socket, buffer, BUFFER_SIZE);
+        memset(buffer, 0, sizeof(buffer));
+        int bytes_received = read(client_socket, buffer, sizeof(buffer));
         if (bytes_received <= 0) {
             // Klient sa odpojil
             printf("Klient sa odpojil\n");
             close(client_socket);
-            pthread_mutex_lock(&clients_mutex);
-            for (int i = 0; i < MAX_CLIENTS; i++) {
-                if (clients[i].socket == client_socket) {
-                    clients[i].socket = 0;
-                    break;
-                }
-            }
-            pthread_mutex_unlock(&clients_mutex);
             break;
         }
 
-        // Spracovanie správy od klienta (napr. pohyb hráča)
-        printf("Prijatá správa: %s\n", buffer);
+        // Spracovanie ťahu
+        Karta aktualna_karta;
+        aktualna_karta.farba = buffer[0];
+        aktualna_karta.hodnota = buffer[1];
+        pthread_mutex_lock(&mutex_hra);
+        if (je_platny_tah(kopa[vrch_kopy], aktualna_karta)) {
+            kopa[++vrch_kopy] = aktualna_karta;
+            spracuj_specialnu_kartu(aktualna_karta, hraci, pocet_hracov, &aktualny_hrac);
 
-        // Poslanie správy všetkým klientom
-        pthread_mutex_lock(&clients_mutex);
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (clients[i].socket != 0) {
-                write(clients[i].socket, buffer, strlen(buffer));
+            // Odstránenie karty z ruky hráča
+            for (int i = 0; i < hraci[aktualny_hrac].pocet_kariet_v_ruke; i++) {
+                if (hraci[aktualny_hrac].karty_v_ruke[i].hodnota == aktualna_karta.hodnota &&
+                    hraci[aktualny_hrac].karty_v_ruke[i].farba == aktualna_karta.farba) {
+                    for (int j = i; j < hraci[aktualny_hrac].pocet_kariet_v_ruke - 1; j++) {
+                        hraci[aktualny_hrac].karty_v_ruke[j] = hraci[aktualny_hrac].karty_v_ruke[j + 1];
+                    }
+                    hraci[aktualny_hrac].pocet_kariet_v_ruke--;
+                    break;
+                }
             }
-        }
-        pthread_mutex_unlock(&clients_mutex);
-    }
 
+            // Kontrola výhry
+            if (kontrola_vyhry(hraci[aktualny_hrac])) {
+                char sprava[100];
+                snprintf(sprava, sizeof(sprava), "Hráč %d vyhral!\n", aktualny_hrac + 1);
+                for (int i = 0; i < pocet_hracov; i++) {
+                    posli_spravu(hraci[i].socket, sprava);
+                }
+                exit(0);
+            }
+        } else {
+            posli_spravu(client_socket, "Neplatný ťah!\n");
+        }
+        pthread_mutex_unlock(&mutex_hra);
+    }
     return NULL;
 }
 
@@ -71,14 +103,12 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    // Inicializácia poľa klientov
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        clients[i].socket = 0;
-    }
+    inicializuj_balicek(balicek);
+    zamiesaj_balicek(balicek, POCET_KARIET_V_BALICKU);
 
     printf("Server počúva na porte %d...\n", port);
 
-    while (1) {
+    while (pocet_hracov < 1) { // OPRAVIT
         struct sockaddr_in client_address;
         socklen_t client_len = sizeof(client_address);
         int client_socket = accept(server_socket, (struct sockaddr *)&client_address, &client_len);
@@ -87,34 +117,27 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Pridanie nového klienta do poľa
-        pthread_mutex_lock(&clients_mutex);
-        int added = 0;
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (clients[i].socket == 0) {
-                clients[i].socket = client_socket;
-                clients[i].address = client_address;
-                printf("Nový klient pripojený: %s:%d\n", inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port));
-                added = 1;
-                break;
-            }
-        }
-        pthread_mutex_unlock(&clients_mutex);
+        hraci[pocet_hracov].socket = client_socket;
+        hraci[pocet_hracov].pocet_kariet_v_ruke = 0;
+        hraci[pocet_hracov].je_aktivny = 1;
+        pocet_hracov++;
 
-        if (!added) {
-            fprintf(stderr, "Nie je možné pripojiť ďalšieho klienta (plný počet klientov)\n");
-            close(client_socket);
-            continue;
-        }
-
-        // Vytvorenie vlákna pre klienta
         pthread_t thread;
-        if (pthread_create(&thread, NULL, handle_client, &client_socket) != 0) {
-            perror("Chyba pri vytváraní vlákna");
-            close(client_socket);
-        }
+        pthread_create(&thread, NULL, handle_client, &client_socket);
         pthread_detach(thread);
     }
+
+    rozdaj_karty_hracom(balicek, hraci, pocet_hracov, ZAC_POCET_KARIET);
+    posli_karty_hracom();
+
+    // ????????
+    int pocet_kariet = POCET_KARIET_V_BALICKU;
+    kopa[++vrch_kopy] = balicek[--pocet_kariet];
+
+    // Hlavná herná slučka
+    /*while (1) {
+        sleep(1); // Simulácia herného cyklu
+    }*/
 
     close(server_socket);
     return 0;

@@ -8,24 +8,15 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include "sockets-lib/socket.h"
+#include "struktury.h"
 
 #define BUFFER_SIZE 1024
 
-void *receive_messages(void *arg) {
-    int client_socket = *(int *)arg;
-    char buffer[BUFFER_SIZE];
-
-    while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-        int bytes_received = read(client_socket, buffer, BUFFER_SIZE);
-        if (bytes_received <= 0) {
-            printf("Server sa odpojil\n");
-            break;
-        }
-        printf("Prijatá správa: %s\n", buffer);
+void vypis_karty(char* karty_v_ruke, int pocet_kariet_v_ruke) {
+    printf("Tvoje karty:\n");
+    for (int i = 0; i < pocet_kariet_v_ruke; i++) {
+        printf("%d: %c%c\n", i + 1, karty_v_ruke[2 * i], karty_v_ruke[2 * i + 1]);
     }
-
-    return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -45,17 +36,58 @@ int main(int argc, char *argv[]) {
 
     printf("Pripojený na server %s:%d\n", server_ip, port);
 
-    // Vlákno na prijímanie správ od servera
-    pthread_t thread;
-    pthread_create(&thread, NULL, receive_messages, &client_socket);
+    // Tu bude logika pre komunikáciu so serverom
+    char karty_v_ruke[BUFFER_SIZE];
+    int pocet_kariet_v_ruke = 0;
 
-    // Hlavné vlákno na posielanie správ na server
-    char buffer[BUFFER_SIZE];
-    while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-        fgets(buffer, BUFFER_SIZE, stdin);
-        write(client_socket, buffer, strlen(buffer));
+    // Prijatie počiatočných kariet od servera
+    for (int i = 0; i < ZAC_POCET_KARIET; i++) {
+        char karta[3];
+        int bytes_received = read(client_socket, karta, sizeof(karta));
+        if (bytes_received > 0) {
+            karty_v_ruke[2 * pocet_kariet_v_ruke] = karta[0];
+            karty_v_ruke[2 * pocet_kariet_v_ruke + 1] = karta[1];
+            pocet_kariet_v_ruke++;
+        }
     }
+
+    // Hlavná slučka klienta
+    while (1) {
+        vypis_karty(karty_v_ruke, pocet_kariet_v_ruke);
+        printf("Vyber kartu (1-%d) alebo potiahni kartu (0): ", pocet_kariet_v_ruke);
+        int vyber;
+        scanf("%d", &vyber);
+
+        if (vyber == 0) {
+            // Potiahnutie karty
+            write(client_socket, "TAHANIE", 7);
+            char nova_karta[3];
+            int bytes_received = read(client_socket, nova_karta, sizeof(nova_karta));
+            if (bytes_received > 0) {
+                karty_v_ruke[2 * pocet_kariet_v_ruke] = nova_karta[0];
+                karty_v_ruke[2 * pocet_kariet_v_ruke + 1] = nova_karta[1];
+                pocet_kariet_v_ruke++;
+                printf("Potiahol si kartu: %c%c\n", nova_karta[0], nova_karta[1]);
+            }
+        } else if (vyber >= 1 && vyber <= pocet_kariet_v_ruke) {
+            // Zahranie karty
+            char karta[3];
+            karta[0] = karty_v_ruke[2 * (vyber - 1)];
+            karta[1] = karty_v_ruke[2 * (vyber - 1) + 1];
+            karta[2] = '\0';
+            write(client_socket, karta, sizeof(karta));
+
+            // Odstránenie karty z ruky
+            for (int i = vyber - 1; i < pocet_kariet_v_ruke - 1; i++) {
+                karty_v_ruke[2 * i] = karty_v_ruke[2 * (i + 1)];
+                karty_v_ruke[2 * i + 1] = karty_v_ruke[2 * (i + 1) + 1];
+            }
+            pocet_kariet_v_ruke--;
+        } else {
+            printf("Neplatná voľba!\n");
+        }
+    }
+
 
     close(client_socket);
     return 0;

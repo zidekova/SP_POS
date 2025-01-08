@@ -1,5 +1,4 @@
 #include "pravidla.h"
-#include "struktury.h"
 #include <stdio.h>
 
 // Teraz môžeme pristupovať k balicek, pretože je deklarovaný v struktury.h
@@ -8,7 +7,7 @@ int je_platny_tah(Karta vrchna_karta, Karta aktualna_karta) {
     return (aktualna_karta.farba == vrchna_karta.farba || aktualna_karta.hodnota == vrchna_karta.hodnota);
 }
 
-void spracuj_specialnu_kartu(Karta aktualna_karta, Hrac hraci[], int pocet_hracov, int *aktualny_hrac) {
+/*void spracuj_specialnu_kartu(Karta aktualna_karta, Hrac hraci[], int pocet_hracov, int *aktualny_hrac) {
     if (aktualna_karta.hodnota == 'A') {
         // Eso: Nasledujúci hráč vynechá ťah
         *aktualny_hrac = (*aktualny_hrac + 2) % pocet_hracov;
@@ -28,7 +27,7 @@ void spracuj_specialnu_kartu(Karta aktualna_karta, Hrac hraci[], int pocet_hraco
         scanf(" %c", &vybrana_farba);
         aktualna_karta.farba = vybrana_farba;
     }
-}
+}*/
 
 int kontrola_vyhry(Hrac hrac) {
     return (hrac.pocet_kariet_v_ruke == 0);

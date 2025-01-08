@@ -17,6 +17,6 @@ typedef struct Hrac {
     int je_aktivny;
 } Hrac;
 
-extern Karta balicek[POCET_KARIET_V_BALICKU];
+//extern Karta balicek[POCET_KARIET_V_BALICKU];
 
 #endif

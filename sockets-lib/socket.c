@@ -49,30 +49,32 @@ void passive_socket_destroy(int socket) {
 int connect_to_server(const char * name, const int port) {
   struct addrinfo * server;
   struct addrinfo hints;
-  hints.ai_family = AF_INET; // IP4 aj IP6
-  hints.ai_socktype = SOCK_STREAM; // Spoľahlivá komunikácia
-  // hints.ai_protocol = IPPROTO_TCP; // TCP/IP
+  memset(&hints, 0, sizeof(hints));  // Vymazanie štruktúry pred použitím
+
+  hints.ai_family = AF_INET;  // IPv4, ak chceš aj IPv6, použiješ AF_UNSPEC
+  hints.ai_socktype = SOCK_STREAM;  // Spoľahlivá komunikácia
+  hints.ai_flags = 0;  // Žiadne špeciálne voľby, skús bez nastavenia flagov
+  
   // Zisťovanie adresy servera podľa mena
-  // Pozor! môže existovať v určitých prípadoch aj viac dostupných adries
-  char portText[10]= {0};
+  char portText[10] = {0};
   sprintf(portText, "%d", port);
   int s = getaddrinfo(name, portText, &hints, &server);
   if (s != 0) {
     fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
     return -1;
   }
+
+  // Pre každý záznam sa pokúsime pripojiť
   for (struct addrinfo * rp = server; rp != NULL; rp = rp->ai_next) {
-    // Vytvorenie schránky pre komunikáciu cez internet
     int actSock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (actSock < 0) {
       continue;
     }
-    // Pripojenie na server
-    if(connect(actSock, server->ai_addr, server->ai_addrlen) < 0) {
-      // Neúspešné
+    
+    // Pokúsi sa pripojiť na server
+    if (connect(actSock, rp->ai_addr, rp->ai_addrlen) < 0) {
       close(actSock);
     } else {
-      // Úspešné
       freeaddrinfo(server); 
       return actSock;
     }

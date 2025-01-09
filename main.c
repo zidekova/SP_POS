@@ -5,20 +5,22 @@
 #include <string.h>
 #include <sys/wait.h> 
 
-void start_server(int port) {
+int start_server(int port) {
     pid_t pid = fork();
     if (pid == 0) {
         // Detský proces - spustí server
         char port_str[16];
         snprintf(port_str, sizeof(port_str), "%d", port);
         execl("./server", "server", port_str, (char *)NULL);
-        perror("execl"); // Ak execl zlyhá
+        perror("Chyba pri spustení servera");
         exit(1);
     } else if (pid < 0) {
         perror("fork");
+        return -1;
     } else {
+        // Rodičovský proces - server je spustený v pozadí
         printf("Server bol spustený na porte %d\n", port);
-        sleep(2);
+        return 0;
     }
 }
 

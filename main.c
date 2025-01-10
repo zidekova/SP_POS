@@ -77,8 +77,6 @@ int main() {
             printf("Neplatná voľba!\n");
             break;
     }
-
-    //printf("Program čaká na ukončenie servera/klienta...\n");
     
     while (1) {
         sleep(1); // Program beží na pozadí

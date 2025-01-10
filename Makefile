@@ -2,7 +2,7 @@
 CC = gcc
 
 # Prepínače pre kompiláciu
-CFLAGS = -Wall -Wextra -pthread -I.
+CFLAGS = -g -Wall -Wextra -pthread -I.
 
 # Ciele
 TARGETS = main server klient

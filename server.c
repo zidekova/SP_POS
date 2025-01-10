@@ -1,3 +1,4 @@
+// server.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,16 +11,7 @@
 #include <time.h>
 #include "sockets-lib/socket.h"
 #include "balicek_kariet.h"
-
-#define MAX_HRA_COV 10  // Maximálny počet hráčov
-
-Hrac hraci[MAX_POCET_HRACOV];
-int pocet_hracov = 0;
-int hra_bezi = 0;
-int client_sockets[MAX_HRA_COV];  // Zoznam socketov pripojených klientov
-pthread_mutex_t mutex_hra = PTHREAD_MUTEX_INITIALIZER;
-int aktualny_hrac = 0;  // Index aktuálneho hráča v poradí
-Karta karta_na_vrchu;
+#include "pravidla.h"
 
 void posli_spravu(int socket, const char* sprava) {
     if (write(socket, sprava, strlen(sprava)) < 0) {
@@ -27,30 +19,29 @@ void posli_spravu(int socket, const char* sprava) {
     }
 }
 
-void posli_vsetkym(const char* sprava) {
-    pthread_mutex_lock(&mutex_hra);
-    printf("Posielam správu všetkým klientom: %s\n", sprava);
+void posli_vsetkym(Hra *hra, const char* sprava) {
+    //pthread_mutex_lock(&hra->mutex_hra);
 
-    for (int i = 0; i < pocet_hracov; i++) {
-        if (hraci[i].je_aktivny && hraci[i].socket != -1) {
-            if (write(hraci[i].socket, sprava, strlen(sprava)) < 0) {
+    for (int i = 0; i < hra->pocet_hracov; i++) {
+        if (hra->hraci[i].je_aktivny && hra->hraci[i].socket != -1) {
+            if (write(hra->hraci[i].socket, sprava, strlen(sprava)) < 0) {
                 perror("Chyba pri odosielaní správy klientovi");
             }
         }
     }
-    pthread_mutex_unlock(&mutex_hra);
+    //pthread_mutex_unlock(&hra->mutex_hra);
 }
 
-void posli_info_o_karte_na_vrchu() {
+void posli_info_o_karte_na_vrchu(Hra *hra) {
     char sprava[50];
-    snprintf(sprava, sizeof(sprava), "Karta na vrchu: %c%c\n", karta_na_vrchu.farba, karta_na_vrchu.hodnota);
-    posli_vsetkym(sprava);
+    snprintf(sprava, sizeof(sprava), "Karta na vrchu: %c%c\n", hra->karta_na_vrchu.farba, hra->karta_na_vrchu.hodnota);
+    posli_vsetkym(hra, sprava);
 }
 
-void posli_info_o_poradi() {
+void posli_info_o_poradi(Hra *hra) {
     char sprava[50];
-    snprintf(sprava, sizeof(sprava), "Na ťahu je hráč %d\n", aktualny_hrac + 1);
-    posli_vsetkym(sprava);
+    snprintf(sprava, sizeof(sprava), "Na ťahu je hráč %d\n", hra->aktualny_hrac + 1);
+    posli_vsetkym(hra, sprava);
 }
 
 void vypis_hracove_karty(Hrac* hrac)
@@ -69,58 +60,55 @@ void vypis_hracove_karty(Hrac* hrac)
 }
 
 void *handle_client(void *arg) {
-    int client_socket = *(int *)arg;
+    ClientData *client_data = (ClientData *)arg;
+    int client_socket = client_data->client_socket;
+    Hra *hra = client_data->hra;
     char buffer[256];
-
-    // Balíček kariet a počet kariet v balíčku
-    //Karta balicek[POCET_KARIET_V_BALICKU];
-    //int pocet_kariet_v_balicku = POCET_KARIET_V_BALICKU;
 
     while (1) {
         memset(buffer, 0, sizeof(buffer));
         int bytes_received = read(client_socket, buffer, sizeof(buffer));
+
         if (bytes_received <= 0) {
             printf("Klient sa odpojil. Socket: %d\n", client_socket);
             close(client_socket);
 
             // inicializacia pola hracov
-            pthread_mutex_lock(&mutex_hra);
-            for (int i = 0; i < pocet_hracov; i++) {
-                if (hraci[i].socket == client_socket) {
-                    hraci[i].je_aktivny = 0;
-                    hraci[i].socket = -1;
-                    pocet_hracov--;
-                    printf("Počet prihlásených hráčov: %d\n", pocet_hracov);
+            pthread_mutex_lock(&hra->mutex_hra);
+            for (int i = 0; i < hra->pocet_hracov; i++) {
+                if (hra->hraci[i].socket == client_socket) {
+                    hra->hraci[i].je_aktivny = 0;
+                    hra->hraci[i].socket = -1;
+                    hra->pocet_hracov--;
+                    printf("Počet prihlásených hráčov: %d\n", hra->pocet_hracov);
                     break;
                 }
             }
-            pthread_mutex_unlock(&mutex_hra);
+            pthread_mutex_unlock(&hra->mutex_hra);
+            pthread_exit(NULL);  
             break;
         }
 
-        //printf("Prijatá správa od klienta: %s\n", buffer);
-
         if (strcmp(buffer, "START_GAME") == 0) {
-            if (pocet_hracov < 2 || pocet_hracov > 4) {
+            if (hra->pocet_hracov < 2 || hra->pocet_hracov > 4) {
                 posli_spravu(client_socket, "Hra nemôže začať. Počet hráčov musí byť medzi 2 a 4.\n");
                 continue;
             }
             
             // Oznám všetkým hráčom, že hra začala
-            posli_vsetkym("Hra začala\n");
+            posli_vsetkym(hra, "Hra začala\n");
 
-            Karta balicek[POCET_KARIET_V_BALICKU];
-            inicializuj_balicek(balicek);
-            zamiesaj_balicek(balicek, POCET_KARIET_V_BALICKU);
-            rozdaj_karty_hracom(balicek, hraci, pocet_hracov, &karta_na_vrchu);
+            inicializuj_balicek(hra->volne, &hra->pocet_volnych_kariet);
+            zamiesaj_balicek(hra->volne, hra->pocet_volnych_kariet);
+            rozdaj_karty_hracom(hra);
 
-            posli_info_o_karte_na_vrchu();
+            posli_info_o_karte_na_vrchu(hra);
 
-            aktualny_hrac = 0;
-            posli_info_o_poradi();
+            hra->aktualny_hrac = 0;
+            posli_info_o_poradi(hra);
 
-            for (int i = 0; i < pocet_hracov; i++) {
-                vypis_hracove_karty(&hraci[i]);
+            for (int i = 0; i < hra->pocet_hracov; i++) {
+                vypis_hracove_karty(&hra->hraci[i]);
             }
         }
 
@@ -128,148 +116,140 @@ void *handle_client(void *arg) {
             char farba = buffer[5];
             char hodnota = buffer[6];
 
-            // Aktualizuj kartu na vrchu
-            karta_na_vrchu.farba = farba;
-            karta_na_vrchu.hodnota = hodnota;
+            pthread_mutex_lock(&hra->mutex_hra);
 
-            // Odstráň kartu z ruky hráča
-            for (int i = 0; i < hraci[aktualny_hrac].pocet_kariet_v_ruke; i++) {
-                if (hraci[aktualny_hrac].karty_v_ruke[i].farba == farba &&
-                    hraci[aktualny_hrac].karty_v_ruke[i].hodnota == hodnota) {
-                    // Posuň karty v poli doľava
-                    for (int j = i; j < hraci[aktualny_hrac].pocet_kariet_v_ruke - 1; j++) {
-                        hraci[aktualny_hrac].karty_v_ruke[j] = hraci[aktualny_hrac].karty_v_ruke[j + 1];
-                    }
-                    hraci[aktualny_hrac].pocet_kariet_v_ruke--;
-                    break;
-                }
-            }
-
-            // Oznám všetkým hráčom novú kartu na vrchu
-            char sprava[50];
-            printf("Nova karta na vrchu je: %c%c\n", karta_na_vrchu.farba, karta_na_vrchu.hodnota);
-            snprintf(sprava, sizeof(sprava), "Karta na vrchu: %c%c\n", karta_na_vrchu.farba, karta_na_vrchu.hodnota);
-            posli_vsetkym(sprava);
-
-            // Prepni na ďalšieho hráča
-            aktualny_hrac = (aktualny_hrac + 1) % pocet_hracov;
-            snprintf(sprava, sizeof(sprava), "Na ťahu je hráč %d\n", aktualny_hrac + 1);
-            posli_vsetkym(sprava);
-
-            // Potvrdenie klientovi
-            posli_spravu(client_socket, "Karta bola úspešne zahraná.\n");
-            
-            // Po aktualizácii ťahu
-            snprintf(sprava, sizeof(sprava), "Si na rade\n");
-            posli_spravu(hraci[aktualny_hrac].socket, sprava);
-            vypis_hracove_karty(&hraci[aktualny_hrac]);
-        }
-
-        /*if (strncmp(buffer, "PLAY ", 5) == 0) {
-            printf("Správa začína na 'PLAY '. Spracovávam...\n");
-            char farba = buffer[5];
-            char hodnota = buffer[6];
-
-            pthread_mutex_lock(&mutex_hra);
-
-            // Kontrola, či hráč môže zahrať kartu
-            if (farba == karta_na_vrchu.farba || hodnota == karta_na_vrchu.hodnota) {
-                // Aktualizuj kartu na vrchu
-                karta_na_vrchu.farba = farba;
-                karta_na_vrchu.hodnota = hodnota;
-
-                // Odstráň kartu z ruky hráča
-                int karta_najdena = 0;
-                for (int i = 0; i < hraci[aktualny_hrac].pocet_kariet_v_ruke; i++) {
-                    if (hraci[aktualny_hrac].karty_v_ruke[i].farba == farba &&
-                        hraci[aktualny_hrac].karty_v_ruke[i].hodnota == hodnota) {
-                        // Posuň karty v poli doľava
-                        for (int j = i; j < hraci[aktualny_hrac].pocet_kariet_v_ruke - 1; j++) {
-                            hraci[aktualny_hrac].karty_v_ruke[j] = hraci[aktualny_hrac].karty_v_ruke[j + 1];
-                        }
-                        hraci[aktualny_hrac].pocet_kariet_v_ruke--;
-                        karta_najdena = 1;
+            // Skontroluj, či je ťah platný
+            Karta hracova_karta = {farba, hodnota};
+            if (je_platny_tah(hra->karta_na_vrchu, hracova_karta)) {
+                // Odhoď kartu do kopy
+                int index_karty = -1;
+                for (int i = 0; i < hra->hraci[hra->aktualny_hrac].pocet_kariet_v_ruke; i++) {
+                    if (hra->hraci[hra->aktualny_hrac].karty_v_ruke[i].farba == farba &&
+                        hra->hraci[hra->aktualny_hrac].karty_v_ruke[i].hodnota == hodnota) {
+                        index_karty = i;
                         break;
                     }
                 }
-                
-                if (karta_najdena) {
-                    // Oznám všetkým hráčom novú kartu na vrchu
-                    posli_vsetkym("Karta na vrchu: %c%c\n", karta_na_vrchu.farba, karta_na_vrchu.hodnota);
+
+                if (index_karty != -1) {
+                    odhod_kartu_do_kopy(hra, &hra->hraci[hra->aktualny_hrac], index_karty);
+                    hra->karta_na_vrchu = hracova_karta;
+                    
+                    // Spracuj špeciálnu kartu
+                    je_sedmicka(hracova_karta, hra);
+                    je_eso(hracova_karta, hra);
+                    je_menic(hracova_karta, hra);
+
+                    // Kontrola, či hráč vyhral
+                    if (kontrola_vyhry(&hra->hraci[hra->aktualny_hrac])) {
+                        char sprava[100];
+                        printf("VYHRA!!!!!!!!\n");
+                        //snprintf(sprava, sizeof(sprava), "Hráč %d vyhral hru!\n", hra->hraci[hra->aktualny_hrac].socket);
+                        posli_vsetkym(hra, "Hráč vyhral hru!\n");
+                        hra->hra_bezi = 0; // Ukonči hru
+                        pthread_mutex_unlock(&hra->mutex_hra);
+                        break;
+                    }
 
                     // Prepni na ďalšieho hráča
-                    aktualny_hrac = (aktualny_hrac + 1) % pocet_hracov;
-                    posli_vsetkym("Na ťahu je hráč %d\n", aktualny_hrac + 1);
-
-                    // Potvrdenie klientovi
-                    posli_spravu(client_socket, "Karta bola úspešne zahraná.\n");
-                } else {
-                    posli_spravu(client_socket, "Chyba: Karta sa nenašla v tvojej ruke!\n");
+                    hra->aktualny_hrac = (hra->aktualny_hrac + 1) % hra->pocet_hracov;
                 }
             } else {
-                posli_spravu(client_socket, "Nemôžeš zahrať túto kartu!\n");
+                posli_spravu(client_socket, "Neplatný ťah!\n");
             }
+            
+            pthread_mutex_unlock(&hra->mutex_hra);
 
-            pthread_mutex_unlock(&mutex_hra);
-        } else {
-            printf("Správa nezačína na 'PLAY '. Obsah: %s\n", buffer);
+            // Oznám všetkým hráčom novú kartu na vrchu
+            char sprava[50];
+            posli_info_o_karte_na_vrchu(hra);
+
+            // Prepni na ďalšieho hráča
+            posli_info_o_poradi(hra);
+            
+            // Po aktualizácii ťahu
+            snprintf(sprava, sizeof(sprava), "Si na rade\n");
+            posli_spravu(hra->hraci[hra->aktualny_hrac].socket, sprava);
+            vypis_hracove_karty(&hra->hraci[hra->aktualny_hrac]);
         }
 
-        if (strcmp(buffer, "DRAW") == 0) {
-            pthread_mutex_lock(&mutex_hra);
+        if (strcmp(buffer, "draw") == 0) {
+            pthread_mutex_lock(&hra->mutex_hra);
 
-            if (pocet_kariet_v_balicku > 0) {
-                Karta potiahnuta_karta = balicek[pocet_kariet_v_balicku - 1];
-                hraci[aktualny_hrac].karty_v_ruke[hraci[aktualny_hrac].pocet_kariet_v_ruke] = potiahnuta_karta;
-                hraci[aktualny_hrac].pocet_kariet_v_ruke++;
-                pocet_kariet_v_balicku--;
-
-                char sprava[50];
-                snprintf(sprava, sizeof(sprava), "Potiahol si kartu: %c%c\n", potiahnuta_karta.farba, potiahnuta_karta.hodnota);
-                posli_spravu(client_socket, sprava);
-
-                snprintf(sprava, sizeof(sprava), "Hráč %d si potiahol kartu.\n", aktualny_hrac + 1);
-                posli_vsetkym(sprava);
-
-                prepni_na_dalsieho_hraca();
-            } else {
-                posli_spravu(client_socket, "Balíček je prázdny!\n");
+            if (hra->pocet_volnych_kariet <= 0) {
+                // Ak sú voľné karty prázdne, presuň karty z kopy
+                presun_karty_z_kopy_do_volnych(hra);
             }
 
-            pthread_mutex_unlock(&mutex_hra);
-        }*/
+            // Potiahni kartu z balíčka
+            potiahnut_kartu(hra, &hra->hraci[hra->aktualny_hrac]);
+
+            pthread_mutex_unlock(&hra->mutex_hra);
+
+            // Oznám hráčovi, že si potiahol kartu
+            char sprava[50];
+            snprintf(sprava, sizeof(sprava), "Potiahol si si kartu: %c%c\n",
+                     hra->hraci[hra->aktualny_hrac].karty_v_ruke[hra->hraci[hra->aktualny_hrac].pocet_kariet_v_ruke - 1].farba,
+                     hra->hraci[hra->aktualny_hrac].karty_v_ruke[hra->hraci[hra->aktualny_hrac].pocet_kariet_v_ruke - 1].hodnota);
+            posli_spravu(hra->hraci[hra->aktualny_hrac].socket, sprava);
+
+            // Prepni na ďalšieho hráča
+            hra->aktualny_hrac = (hra->aktualny_hrac + 1) % hra->pocet_hracov;
+
+            // Oznám všetkým hráčom novú kartu na vrchu
+            posli_info_o_karte_na_vrchu(hra);
+
+            // Prepni na ďalšieho hráča
+            posli_info_o_poradi(hra);
+            
+            // Po aktualizácii ťahu
+            snprintf(sprava, sizeof(sprava), "Si na rade\n");
+            posli_spravu(hra->hraci[hra->aktualny_hrac].socket, sprava);
+            vypis_hracove_karty(&hra->hraci[hra->aktualny_hrac]);
+        }
 
         if (strcmp(buffer, "exit") == 0) {
             printf("Klient požiadal o ukončenie spojenia. Socket: %d\n", client_socket);
             close(client_socket);
 
-            pthread_mutex_lock(&mutex_hra);
-            for (int i = 0; i < pocet_hracov; i++) {
-                if (hraci[i].socket == client_socket) {
-                    hraci[i].je_aktivny = 0;
-                    hraci[i].socket = -1;
-                    pocet_hracov--;
-                    printf("Počet prihlásených hráčov: %d\n", pocet_hracov);
+            pthread_mutex_lock(&hra->mutex_hra);
+            for (int i = 0; i < hra->pocet_hracov; i++) {
+                if (hra->hraci[i].socket == client_socket) {
+                    hra->hraci[i].je_aktivny = 0;
+                    hra->hraci[i].socket = -1;
+                    hra->pocet_hracov--;
+                    printf("Počet prihlásených hráčov: %d\n", hra->pocet_hracov);
                     break;
                 }
             }
-            pthread_mutex_unlock(&mutex_hra);
+            pthread_mutex_unlock(&hra->mutex_hra);
             break;
         }
     }
+
+    printf("Ukončujem vláknové spojenie pre socket: %d\n", client_socket);
+    free(client_data);
     return NULL;
 }
 
 int main(int argc, char *argv[]) {
+    srand(time(NULL));
     if (argc < 2) {
         fprintf(stderr, "Použitie: %s <port>\n", argv[0]);
         exit(1);
     }
 
+    Hra hra = {
+        .pocet_hracov = 0,
+        .hra_bezi = 0,
+        .mutex_hra = PTHREAD_MUTEX_INITIALIZER,
+        .aktualny_hrac = 0
+    };
+
     for (int i = 0; i < MAX_POCET_HRACOV; i++) {
-        hraci[i].socket = -1;
-        hraci[i].pocet_kariet_v_ruke = 0;
-        hraci[i].je_aktivny = 0;
+        hra.hraci[i].socket = -1;
+        hra.hraci[i].pocet_kariet_v_ruke = 0;
+        hra.hraci[i].je_aktivny = 0;
     }
 
     int port = atoi(argv[1]);
@@ -279,8 +259,8 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    for (int i = 0; i < MAX_HRA_COV; i++) {
-        client_sockets[i] = -1;
+    for (int i = 0; i < MAX_POCET_HRACOV; i++) {
+        hra.client_sockets[i] = -1;
     }
 
     printf("Server počúva na porte %d...\n", port);
@@ -292,29 +272,34 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        pthread_mutex_lock(&mutex_hra);
-        if (pocet_hracov < MAX_HRA_COV) {
-            for (int i = 0; i < MAX_HRA_COV; i++) {
-                if (client_sockets[i] == -1) {
-                    client_sockets[i] = client_socket;
-                    hraci[i].socket = client_socket;
-                    hraci[i].je_aktivny = 1;
+        pthread_mutex_lock(&hra.mutex_hra);
+        if (hra.pocet_hracov < MAX_POCET_HRACOV) {
+            for (int i = 0; i < MAX_POCET_HRACOV; i++) {
+                if (hra.client_sockets[i] == -1) {
+                    hra.client_sockets[i] = client_socket;
+                    hra.hraci[i].socket = client_socket;
+                    hra.hraci[i].je_aktivny = 1;
                     break;
                 }
             }
-            pocet_hracov++;
-            printf("Počet prihlásených hráčov: %d\n", pocet_hracov);
+            hra.pocet_hracov++;
+            printf("Počet prihlásených hráčov: %d\n", hra.pocet_hracov);
         } else {
             printf("Maximálny počet hráčov dosiahnutý.\n");
             close(client_socket);
         }
-        pthread_mutex_unlock(&mutex_hra);
+        pthread_mutex_unlock(&hra.mutex_hra);
+
+        ClientData *client_data = malloc(sizeof(ClientData));
+        client_data->client_socket = client_socket;
+        client_data->hra = &hra;
 
         pthread_t thread;
-        pthread_create(&thread, NULL, handle_client, &client_socket);
+        pthread_create(&thread, NULL, handle_client, client_data);
         pthread_detach(thread);
     }
 
+    printf("Server sa ukončuje...\n");
     passive_socket_destroy(server_socket);
     return 0;
 }

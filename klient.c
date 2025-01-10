@@ -11,6 +11,7 @@
 
 int hra_bezi = 0;
 int som_na_tahu = 0;
+int klient_sa_ukoncuje = 0;
 
 // Funkcia na prijímanie správ od servera
 void *receive_messages(void *arg) {
@@ -22,7 +23,8 @@ void *receive_messages(void *arg) {
         int bytes_received = read(client_socket, buffer, sizeof(buffer));
         if (bytes_received <= 0) {
             printf("Server sa odpojil\n");
-            exit(0);
+            klient_sa_ukoncuje = 1;
+            pthread_exit(NULL); 
             break;
         }
         printf("%s\n", buffer);
@@ -36,7 +38,15 @@ void *receive_messages(void *arg) {
         if (strstr(buffer, "Si na rade\n") != NULL) {
             som_na_tahu = 1;
         }
+
+        // Ak server oznámil, že niekto vyhral hru
+        if (strstr(buffer, "Hráč vyhral hru!\n") != NULL) {
+            hra_bezi = 0; // Ukonči hru
+            klient_sa_ukoncuje = 1; // Signalizácia ukončenia
+            break; // Ukonči slučku prijímania správ
+        }
     }
+    printf("Receive messages je ukoncene\n");
     return NULL;
 }
 
@@ -62,10 +72,10 @@ int main(int argc, char *argv[]) {
     // Vytvorenie vlákna na prijímanie správ od servera
     pthread_t thread;
     pthread_create(&thread, NULL, receive_messages, &client_socket);
-    pthread_detach(thread);
+    //pthread_detach(thread);
 
     // Hlavná slučka klienta
-    while (1) {
+    while (!klient_sa_ukoncuje) {
         char command[256];
 
         if (!hra_bezi) {
@@ -73,7 +83,9 @@ int main(int argc, char *argv[]) {
             if (is_host) {
                 // Hostiteľ môže spustiť hru
                 printf("Si host! Zadajte príkaz (start - spustiť hru, exit - ukončiť, správa - poslať správu všetkým): \n");
-                fgets(command, sizeof(command), stdin);
+                if (fgets(command, sizeof(command), stdin) == NULL) {
+                    continue;
+                }
                 command[strcspn(command, "\n")] = 0;  // Odstránenie nového riadku
 
                 if (strcmp(command, "start") == 0) {
@@ -84,6 +96,7 @@ int main(int argc, char *argv[]) {
                     // Príkaz EXIT: Ukončiť spojenie
                     write(client_socket, "EXIT", strlen("EXIT"));
                     printf("Ukončujem spojenie...\n");
+                    klient_sa_ukoncuje = 1;
                     break;
                 } else {
                     // Poslanie správy všetkým klientom
@@ -93,11 +106,10 @@ int main(int argc, char *argv[]) {
             }
         } else {
             // Po spustení hry
-            static int sprava_vypisana = 0;
             if (som_na_tahu) {
-                sprava_vypisana = 0;
-                // Ak je tento klient na ťahu, zobrazte výzvu na zadanie príkazu
-                fgets(command, sizeof(command), stdin);
+                if (fgets(command, sizeof(command), stdin) == NULL) {
+                    continue;
+                }
                 command[strcspn(command, "\n")] = 0;  // Odstránenie nového riadku
 
                 if (strncmp(command, "play ", 5) == 0) {
@@ -112,21 +124,17 @@ int main(int argc, char *argv[]) {
                     // Príkaz EXIT: Ukončiť spojenie
                     write(client_socket, "exit", strlen("exit"));
                     printf("Ukončujem spojenie...\n");
+                    klient_sa_ukoncuje = 1;
                     break;
                 } else {
                     printf("Neznámy príkaz. Skúste znova.\n");
                 }
-            } else {
-                if (!sprava_vypisana) {
-                    printf("Nie si na rade. Počkaj na svoj ťah.\n");
-                    fgets(command, sizeof(command), stdin);
-                    sprava_vypisana = 1;  // Nastavte na 1 po vypísaní správy
-                }
-                sleep(1);
             }
         }
     }
 
+    printf("Klient sa ukončuje...\n");
+    pthread_join(thread, NULL);
     // Zatvorenie socketu
     active_socket_destroy(client_socket);
     return 0;

@@ -3,9 +3,11 @@
 
 #include "struktury.h"
 
-void inicializuj_balicek(Karta balicek[]);
-void zamiesaj_balicek(Karta balicek[], int pocet_kariet);
-void rozdaj_karty_hracom(Karta balicek[], Hrac hraci[], int pocet_hracov, Karta *karta_na_vrchu);
-void potiahnut_kartu(Karta balicek[], int *pocet_kariet, Hrac *hrac);
+void inicializuj_balicek(Karta volne[], int *pocet_volnych_kariet);
+void zamiesaj_balicek(Karta volne[], int pocet_volnych_kariet);
+void rozdaj_karty_hracom(Hra *hra);
+void potiahnut_kartu(Hra *hra, Hrac *hrac);
+void odhod_kartu_do_kopy(Hra *hra, Hrac *hrac, int index_karty);
+void presun_karty_z_kopy_do_volnych(Hra *hra);
 
 #endif

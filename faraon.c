@@ -1,14 +1,9 @@
-// main.c
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/wait.h> 
+// faraon.c
+#include "faraon.h"
 
 int start_server(int port) {
     pid_t pid = fork();
     if (pid == 0) {
-        // Detský proces - spustí server
         char port_str[16];
         snprintf(port_str, sizeof(port_str), "%d", port);
         execl("./server", "server", port_str, (char *)NULL);
@@ -18,16 +13,15 @@ int start_server(int port) {
         perror("fork");
         return -1;
     } else {
-        // Rodičovský proces - server je spustený v pozadí
         printf("Server bol spustený na porte %d\n", port);
         return pid; 
     }
+    return 0;
 }
 
 int start_client(const char *server_ip, int port, int is_host) {
     pid_t pid = fork();
     if (pid == 0) {
-        // Detský proces - spustí klienta
         char port_str[16];
         snprintf(port_str, sizeof(port_str), "%d", port);
         if (is_host) {
@@ -35,7 +29,7 @@ int start_client(const char *server_ip, int port, int is_host) {
         } else {
             execl("./klient", "klient", server_ip, port_str, (char *)NULL);
         }
-        perror("execl"); // Ak execl zlyhá
+        perror("execl");
         exit(1);
     } else if (pid < 0) {
         perror("fork");
@@ -43,6 +37,7 @@ int start_client(const char *server_ip, int port, int is_host) {
         printf("Klient sa pripojil na server %s:%d\n", server_ip, port);
         return pid; 
     }
+    return 0;
 }
 
 int main() {
@@ -64,19 +59,17 @@ int main() {
             scanf("%d", &port);
             server_pid = start_server(port);
             sleep(2);
-            start_client("127.0.0.1", port, 1);
+            start_client("localhost", port, 1);
             break;
         case 2:
             printf("Zadajte port servera: ");
             scanf("%d", &port);
 
-            // Spustí klienta a uloží jeho PID
-            pid_t client_pid = start_client("127.0.0.1", port, 0);
+            pid_t client_pid = start_client("localhost", port, 0);
 
             if (client_pid > 0) {
-                // Čakajte na ukončenie klienta
                 int status;
-                waitpid(client_pid, &status, 0); // Čakajte na ukončenie klienta
+                waitpid(client_pid, &status, 0);
                 printf("Klient bol ukončený. Ukončujem program...\n");
             } else {
                 printf("Chyba pri spustení klienta.\n");
@@ -90,15 +83,12 @@ int main() {
             break;
     }
     
-    // Ak bol spustený server, čakajte na jeho ukončenie
     if (server_pid != -1) {
         int status;
-        waitpid(server_pid, &status, 0); // Čakajte na ukončenie serverového procesu
+        waitpid(server_pid, &status, 0);
         printf("Server bol ukončený. Ukončujem program...\n");
         exit(0);
     }
-
-    printf("KONIEC...\n");
 
     return 0;
 }

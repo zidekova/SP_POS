@@ -1,6 +1,9 @@
 #ifndef BALICEK_KARIET_H
 #define BALICEK_KARIET_H
 
+#include <stdlib.h>
+#include <time.h>
+#include <stdio.h>
 #include "struktury.h"
 
 void inicializuj_balicek(Karta volne[], int *pocet_volnych_kariet);

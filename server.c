@@ -1,17 +1,5 @@
 // server.c
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <pthread.h>
-#include <time.h>
-#include "sockets-lib/socket.h"
-#include "balicek_kariet.h"
-#include "pravidla.h"
+#include "server.h"
 
 void posli_spravu(int socket, const char* sprava) {
     if (write(socket, sprava, strlen(sprava)) < 0) {
@@ -23,7 +11,7 @@ void posli_vsetkym(Hra *hra, const char* sprava) {
     for (int i = 0; i < hra->pocet_hracov; i++) {
         if (hra->hraci[i].je_aktivny && hra->hraci[i].socket != -1) {
             if (write(hra->hraci[i].socket, sprava, strlen(sprava)) < 0) {
-                perror("Chyba pri odosielaní správy klientovi");
+                perror("Chyba pri odosielaní hromadnej správy");
             }
         }
     }
@@ -71,9 +59,9 @@ void odstran_hraca_z_pola(Hra *hra, int client_socket) {
 }
 
 void *handle_client(void *arg) {
-    ClientData *client_data = (ClientData *)arg;
-    int client_socket = client_data->client_socket;
-    Hra *hra = client_data->hra;
+    ThreadData *data = (ThreadData *)arg;
+    int client_socket = data->client_socket;
+    Hra *hra = data->hra;
     char buffer[256];
 
     while (hra->hra_bezi) {
@@ -94,7 +82,6 @@ void *handle_client(void *arg) {
                 continue;
             }
             
-            // Oznám všetkým hráčom, že hra začala
             posli_vsetkym(hra, "Hra začala\n");
 
             inicializuj_balicek(hra->volne, &hra->pocet_volnych_kariet);
@@ -117,7 +104,6 @@ void *handle_client(void *arg) {
 
             pthread_mutex_lock(&hra->mutex_hra);
 
-            // Skontroluj, či je ťah platný
             Karta hracova_karta = {farba, hodnota};
             if (je_platny_tah(hra->karta_na_vrchu, hracova_karta)) {
                 // Odhoď kartu do kopy
@@ -146,7 +132,7 @@ void *handle_client(void *arg) {
                         posli_vsetkym(hra, sprava);
                         sleep(1);
                         posli_vsetkym(hra, "Výhra!\n");
-                        hra->hra_bezi = 0; // Ukonči hru
+                        hra->hra_bezi = 0; 
                         pthread_mutex_unlock(&hra->mutex_hra);
                         break;
                     }
@@ -160,11 +146,8 @@ void *handle_client(void *arg) {
             
             pthread_mutex_unlock(&hra->mutex_hra);
 
-            // Oznám všetkým hráčom novú kartu na vrchu
             char sprava[50];
             posli_info_o_karte_na_vrchu(hra);
-
-            // Prepni na ďalšieho hráča
             posli_info_o_poradi(hra);
             
             // Po aktualizácii ťahu
@@ -181,25 +164,18 @@ void *handle_client(void *arg) {
                 presun_karty_z_kopy_do_volnych(hra);
             }
 
-            // Potiahni kartu z balíčka
             potiahnut_kartu(hra, &hra->hraci[hra->aktualny_hrac]);
 
             pthread_mutex_unlock(&hra->mutex_hra);
 
-            // Oznám hráčovi, že si potiahol kartu
             char sprava[50];
             snprintf(sprava, sizeof(sprava), "Potiahol si si kartu: %c%c\n",
                      hra->hraci[hra->aktualny_hrac].karty_v_ruke[hra->hraci[hra->aktualny_hrac].pocet_kariet_v_ruke - 1].farba,
                      hra->hraci[hra->aktualny_hrac].karty_v_ruke[hra->hraci[hra->aktualny_hrac].pocet_kariet_v_ruke - 1].hodnota);
             posli_spravu(hra->hraci[hra->aktualny_hrac].socket, sprava);
 
-            // Prepni na ďalšieho hráča
             hra->aktualny_hrac = (hra->aktualny_hrac + 1) % hra->pocet_hracov;
-
-            // Oznám všetkým hráčom novú kartu na vrchu
             posli_info_o_karte_na_vrchu(hra);
-
-            // Prepni na ďalšieho hráča
             posli_info_o_poradi(hra);
             
             // Po aktualizácii ťahu
@@ -209,16 +185,13 @@ void *handle_client(void *arg) {
         }
 
         if (strcmp(buffer, "exit") == 0) {
-            printf("Klient požiadal o ukončenie spojenia. Socket: %d\n", client_socket);
             close(client_socket);
             odstran_hraca_z_pola(hra, client_socket);
             hra->hra_bezi = 0;
             break;
         }
     }
-
-    printf("Ukončujem vláknové spojenie pre socket: %d\n", client_socket);
-    free(client_data);
+    free(data);
     return NULL;
 }
 
@@ -259,7 +232,7 @@ int main(int argc, char *argv[]) {
     int thread_count = 0;
 
     // Čakanie na pripojenie hráčov
-    while (hra.pocet_hracov < 2 && hra.hra_bezi) {  // Čakaj, kým sa nepripoja aspoň 2 hráči
+    while (hra.pocet_hracov < 2 && hra.hra_bezi) {
         int client_socket = passive_socket_wait_for_client(server_socket);
         if (client_socket < 0) {
             perror("Chyba pri prijímaní klienta");
@@ -284,23 +257,18 @@ int main(int argc, char *argv[]) {
         }
         pthread_mutex_unlock(&hra.mutex_hra);
 
-        ClientData *client_data = malloc(sizeof(ClientData));
-        client_data->client_socket = client_socket;
-        client_data->hra = &hra;
+        ThreadData *data = malloc(sizeof(ThreadData));
+        data->client_socket = client_socket;
+        data->hra = &hra;
 
-        pthread_create(&threads[thread_count], NULL, handle_client, client_data);
+        pthread_create(&threads[thread_count], NULL, handle_client, data);
         thread_count++;
     }
 
-    // Hra sa začína, už neprijímame ďalších hráčov
-    printf("Hra začína s %d hráčmi.\n", hra.pocet_hracov);
-
-    // Hlavný cyklus pre hru
     while (hra.hra_bezi) {
         sleep(1);
     }
 
-    // Čakajte na ukončenie všetkých vlákien
     for (int i = 0; i < thread_count; i++) {
         pthread_join(threads[i], NULL);
     }
@@ -311,6 +279,7 @@ int main(int argc, char *argv[]) {
             close(hra.client_sockets[i]);
         }
     }
+
     passive_socket_destroy(server_socket);
     return 0;
 }

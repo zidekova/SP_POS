@@ -21,8 +21,11 @@ void je_sedmicka(Karta aktualna_karta, Hra *hra) {
 void je_eso(Karta aktualna_karta, Hra *hra) {
     if (aktualna_karta.hodnota == 'A') {
         // Eso: Nasledujúci hráč vynechá ťah
-        hra->aktualny_hrac = (hra->aktualny_hrac + 1) % hra->pocet_hracov;
-        printf("Hráč %d vynecháva ťah.\n", (hra->aktualny_hrac + 1));
+        if (hra->hraci[hra->aktualny_hrac].pocet_kariet_v_ruke != 0)
+        {
+            hra->aktualny_hrac = (hra->aktualny_hrac + 1) % hra->pocet_hracov;
+            printf("Hráč %d vynecháva ťah.\n", (hra->aktualny_hrac + 1));
+        }
     }
 }
 

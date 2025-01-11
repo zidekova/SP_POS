@@ -4,7 +4,7 @@
 #include <pthread.h>
 
 #define MAX_POCET_HRACOV 4
-#define ZAC_POCET_KARIET 3
+#define ZAC_POCET_KARIET 5
 #define POCET_KARIET_V_BALICKU 32
 
 typedef struct Karta {
@@ -27,15 +27,24 @@ typedef struct Hra {
     pthread_mutex_t mutex_hra;
     int aktualny_hrac;
     Karta karta_na_vrchu;
-    Karta kopa[POCET_KARIET_V_BALICKU]; // Karty odhodené hráčmi
+    Karta kopa[POCET_KARIET_V_BALICKU]; 
     int pocet_kariet_v_kope;
-    Karta volne[POCET_KARIET_V_BALICKU]; // Zvyšné karty z balíčka
+    Karta volne[POCET_KARIET_V_BALICKU];
     int pocet_volnych_kariet;
 } Hra;
 
 typedef struct {
     int client_socket;
     Hra *hra;
-} ClientData;
+} ThreadData;
+
+typedef struct {
+    int hra_bezi;
+    int klient_sa_ukoncuje;
+    int client_socket;
+    pthread_t receive_thread;
+    pthread_t input_thread;
+    int is_host;
+} KlientStav;
 
 #endif

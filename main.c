@@ -20,11 +20,11 @@ int start_server(int port) {
     } else {
         // Rodičovský proces - server je spustený v pozadí
         printf("Server bol spustený na porte %d\n", port);
-        return 0;
+        return pid; 
     }
 }
 
-void start_client(const char *server_ip, int port, int is_host) {
+int start_client(const char *server_ip, int port, int is_host) {
     pid_t pid = fork();
     if (pid == 0) {
         // Detský proces - spustí klienta
@@ -41,13 +41,14 @@ void start_client(const char *server_ip, int port, int is_host) {
         perror("fork");
     } else {
         printf("Klient sa pripojil na server %s:%d\n", server_ip, port);
-        sleep(2);
+        return pid; 
     }
 }
 
 int main() {
     int choice;
     int port;
+    pid_t server_pid = -1; 
 
     printf("KARTOVÁ HRA FARAÓN\n--------------------------\n");
     printf("Vyberte si možnosť:\n");
@@ -61,14 +62,25 @@ int main() {
         case 1:
             printf("Zadajte port pre server: ");
             scanf("%d", &port);
-            start_server(port);
+            server_pid = start_server(port);
             sleep(2);
             start_client("127.0.0.1", port, 1);
             break;
         case 2:
             printf("Zadajte port servera: ");
             scanf("%d", &port);
-            start_client("127.0.0.1", port, 0);
+
+            // Spustí klienta a uloží jeho PID
+            pid_t client_pid = start_client("127.0.0.1", port, 0);
+
+            if (client_pid > 0) {
+                // Čakajte na ukončenie klienta
+                int status;
+                waitpid(client_pid, &status, 0); // Čakajte na ukončenie klienta
+                printf("Klient bol ukončený. Ukončujem program...\n");
+            } else {
+                printf("Chyba pri spustení klienta.\n");
+            }
             break;
         case 3:
             printf("Ukončujem program...\n");
@@ -78,9 +90,15 @@ int main() {
             break;
     }
     
-    while (1) {
-        sleep(1); // Program beží na pozadí
+    // Ak bol spustený server, čakajte na jeho ukončenie
+    if (server_pid != -1) {
+        int status;
+        waitpid(server_pid, &status, 0); // Čakajte na ukončenie serverového procesu
+        printf("Server bol ukončený. Ukončujem program...\n");
+        exit(0);
     }
+
+    printf("KONIEC...\n");
 
     return 0;
 }

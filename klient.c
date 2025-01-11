@@ -7,10 +7,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
+#include <fcntl.h>
 #include "sockets-lib/socket.h"
 
 int hra_bezi = 0;
-int som_na_tahu = 0;
 int klient_sa_ukoncuje = 0;
 
 // Funkcia na prijímanie správ od servera
@@ -24,7 +24,6 @@ void *receive_messages(void *arg) {
         if (bytes_received <= 0) {
             printf("Server sa odpojil\n");
             klient_sa_ukoncuje = 1;
-            pthread_exit(NULL); 
             break;
         }
         printf("%s\n", buffer);
@@ -35,12 +34,8 @@ void *receive_messages(void *arg) {
             hra_bezi = 1;
         }
 
-        if (strstr(buffer, "Si na rade\n") != NULL) {
-            som_na_tahu = 1;
-        }
-
         // Ak server oznámil, že niekto vyhral hru
-        if (strstr(buffer, "Hráč vyhral hru!\n") != NULL) {
+        if (strstr(buffer, "Výhra!\n") != NULL) {
             hra_bezi = 0; // Ukonči hru
             klient_sa_ukoncuje = 1; // Signalizácia ukončenia
             break; // Ukonči slučku prijímania správ
@@ -72,46 +67,41 @@ int main(int argc, char *argv[]) {
     // Vytvorenie vlákna na prijímanie správ od servera
     pthread_t thread;
     pthread_create(&thread, NULL, receive_messages, &client_socket);
-    //pthread_detach(thread);
+
+    // Nastaviť STDIN na neblokujúci režim
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
     // Hlavná slučka klienta
     while (!klient_sa_ukoncuje) {
         char command[256];
 
-        if (!hra_bezi) {
-            // Pred spustením hry
-            if (is_host) {
-                // Hostiteľ môže spustiť hru
-                printf("Si host! Zadajte príkaz (start - spustiť hru, exit - ukončiť, správa - poslať správu všetkým): \n");
-                if (fgets(command, sizeof(command), stdin) == NULL) {
-                    continue;
-                }
-                command[strcspn(command, "\n")] = 0;  // Odstránenie nového riadku
+        int bytes_read = read(STDIN_FILENO, command, sizeof(command) - 1);
+        if (bytes_read > 0) {
+            command[bytes_read] = '\0';  // Ukončiť reťazec
+            command[strcspn(command, "\n")] = 0; 
 
-                if (strcmp(command, "start") == 0) {
-                    // Príkaz START: Spustiť hru
-                    write(client_socket, "START_GAME", strlen("START_GAME"));
-                    printf("Príkaz na spustenie hry bol odoslaný.\n");
-                } else if (strcmp(command, "exit") == 0) {
-                    // Príkaz EXIT: Ukončiť spojenie
-                    write(client_socket, "EXIT", strlen("EXIT"));
-                    printf("Ukončujem spojenie...\n");
-                    klient_sa_ukoncuje = 1;
-                    break;
-                } else {
-                    // Poslanie správy všetkým klientom
-                    write(client_socket, command, strlen(command));
-                    printf("Správa bola odoslaná: %s\n", command);
+            if (!hra_bezi) {
+                // Pred spustením hry
+                if (is_host) {
+                    if (strcmp(command, "start") == 0) {
+                        // Príkaz START: Spustiť hru
+                        write(client_socket, "START_GAME", strlen("START_GAME"));
+                        printf("Príkaz na spustenie hry bol odoslaný.\n");
+                    } else if (strcmp(command, "exit") == 0) {
+                        // Príkaz EXIT: Ukončiť spojenie
+                        write(client_socket, "EXIT", strlen("EXIT"));
+                        printf("Ukončujem spojenie...\n");
+                        klient_sa_ukoncuje = 1;
+                        break;
+                    } else {
+                        // Poslanie správy všetkým klientom
+                        write(client_socket, command, strlen(command));
+                        printf("Správa bola odoslaná: %s\n", command);
+                    }
                 }
-            }
-        } else {
-            // Po spustení hry
-            if (som_na_tahu) {
-                if (fgets(command, sizeof(command), stdin) == NULL) {
-                    continue;
-                }
-                command[strcspn(command, "\n")] = 0;  // Odstránenie nového riadku
-
+            } else {
+                // Po spustení hry
                 if (strncmp(command, "play ", 5) == 0) {
                     // Príkaz PLAY: Zahrať kartu
                     write(client_socket, command, strlen(command));
@@ -130,6 +120,7 @@ int main(int argc, char *argv[]) {
                     printf("Neznámy príkaz. Skúste znova.\n");
                 }
             }
+        
         }
     }
 
